@@ -25,22 +25,24 @@ function scoreMatch(item: { symbol: string; name: string; theme: string }, clean
 
 export default function SearchBox({ initialQuery = "", compact = false }: { initialQuery?: string; compact?: boolean }) {
   const [value, setValue] = useState(initialQuery);
+  const [isFocused, setIsFocused] = useState(false);
   const clean = value.trim().toLowerCase();
   const exactTicker = value.trim().toUpperCase();
 
   const matches = useMemo(() => {
-    if (!clean || compact) return [];
+    if (!clean) return [];
 
     return SYMBOLS
       .map((item) => ({ item, score: scoreMatch(item, clean) }))
       .filter((entry) => entry.score < 99)
       .sort((a, b) => a.score - b.score || a.item.symbol.localeCompare(b.item.symbol))
-      .slice(0, 8)
+      .slice(0, compact ? 6 : 8)
       .map((entry) => entry.item);
   }, [clean, compact]);
 
   const hasExactSymbol = matches.some((item) => item.symbol.toUpperCase() === exactTicker);
-  const showExactSearch = Boolean(clean && !compact && isTickerLike(value) && !hasExactSymbol);
+  const showExactSearch = Boolean(clean && isTickerLike(value) && !hasExactSymbol);
+  const showSuggestions = isFocused && (matches.length > 0 || showExactSearch);
 
   function go(query: string) {
     const q = query.trim();
@@ -60,6 +62,8 @@ export default function SearchBox({ initialQuery = "", compact = false }: { init
           name="q"
           value={value}
           onChange={(event) => setValue(event.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => window.setTimeout(() => setIsFocused(false), 120)}
           placeholder="Ticker or company name"
           autoComplete="off"
           aria-label="Search ticker or company"
@@ -70,20 +74,20 @@ export default function SearchBox({ initialQuery = "", compact = false }: { init
         </button>
       </form>
 
-      {(matches.length > 0 || showExactSearch) && (
+      {showSuggestions && (
         <div className="suggestions" aria-label="Ticker suggestions">
           {matches.map((item) => (
-            <button key={item.symbol} type="button" onClick={() => go(item.symbol)}>
+            <button key={item.symbol} type="button" onMouseDown={(event) => { event.preventDefault(); go(item.symbol); }}>
               <span className="suggestion-symbol">{item.symbol}</span>
               <span className="suggestion-name">{item.name}</span>
               <span className="suggestion-theme">{item.theme}</span>
             </button>
           ))}
           {showExactSearch && (
-            <button type="button" className="exact-search" onClick={() => go(exactTicker)}>
+            <button type="button" className="exact-search" onMouseDown={(event) => { event.preventDefault(); go(exactTicker); }}>
               <span className="suggestion-symbol">{exactTicker}</span>
               <span className="suggestion-name">Search exact ticker</span>
-              <span className="suggestion-theme">Works even if it is not in the local suggestion file</span>
+              <span className="suggestion-theme">Use FMP live lookup even if it is not in suggestions</span>
             </button>
           )}
         </div>

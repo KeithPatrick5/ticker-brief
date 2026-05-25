@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TrendingUp, AlertTriangle, Zap, Building2, WalletCards, BarChart3, PlugZap } from "lucide-react";
 import SearchBox from "./components/SearchBox";
+import DougLogo from "./components/DougLogo";
 import { getResearch, formatNumber, formatRatio } from "../lib/providers";
 
 type HomeProps = { searchParams?: Promise<{ q?: string }> };
@@ -40,9 +41,7 @@ export default async function Home({ searchParams }: HomeProps) {
   return (
     <main className="shell">
       <section className={data ? "search-panel compact" : "search-panel"}>
-        <a className="home-banner" href="/" aria-label="Doug's Search home">
-          <img src="/dougs-search-banner.png" alt="Doug's Search" />
-        </a>
+        <DougLogo />
         <SearchBox initialQuery={query} compact={Boolean(data)} />
       </section>
 

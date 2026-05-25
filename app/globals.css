@@ -21,9 +21,52 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .search-panel { min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px 0 96px; }
 .search-panel.compact { min-height: auto; justify-content: flex-start; align-items: center; padding: 8px 0; position: sticky; top: 0; z-index: 10; background: linear-gradient(180deg, rgba(5,6,9,.98), rgba(5,6,9,.93)); backdrop-filter: blur(8px); }
-.home-banner { display: block; width: min(90vw, 540px); margin: 0 auto 18px; }
-.home-banner img { display: block; width: 100%; height: auto; max-height: 116px; object-fit: contain; filter: drop-shadow(0 12px 26px rgba(0,0,0,.35)); }
-.search-panel.compact .home-banner { display: none; }
+.doug-logo {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 12px;
+  width: min(92vw, 520px);
+  margin: 0 auto 20px;
+  padding: 12px 14px;
+  border: 1px solid #26364a;
+  background:
+    linear-gradient(90deg, rgba(10, 33, 24, .75), rgba(5, 8, 13, .96) 36%, rgba(5, 12, 11, .92)),
+    radial-gradient(circle at 14% 50%, rgba(25, 255, 117, .14), transparent 26%),
+    radial-gradient(circle at 92% 42%, rgba(27, 255, 118, .12), transparent 22%);
+  box-shadow: 0 14px 40px rgba(0,0,0,.42);
+  overflow: hidden;
+}
+.search-panel.compact .doug-logo { display: none; }
+.radar-mark {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(85, 255, 139, .35);
+  border-radius: 50%;
+  background:
+    repeating-radial-gradient(circle, rgba(89,255,144,.18) 0 1px, transparent 1px 11px),
+    linear-gradient(rgba(80,255,128,.15), rgba(80,255,128,.04));
+}
+.radar-mark:before, .radar-mark:after { content: ''; position: absolute; background: rgba(95,255,147,.18); }
+.radar-mark:before { left: 50%; top: 2px; bottom: 2px; width: 1px; }
+.radar-mark:after { top: 50%; left: 2px; right: 2px; height: 1px; }
+.radar-sweep { position: absolute; left: 50%; top: 50%; width: 24px; height: 2px; background: var(--green); transform-origin: 0 50%; transform: rotate(-36deg); box-shadow: 0 0 16px rgba(114,240,168,.9); }
+.radar-dot { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px rgba(114,240,168,.9); }
+.radar-dot.d1 { left: 15px; top: 33px; }
+.radar-dot.d2 { right: 12px; top: 18px; }
+.radar-dot.d3 { right: 20px; bottom: 10px; }
+.doug-wordmark { display: grid; text-align: center; min-width: 0; }
+.doug-title { font-size: clamp(28px, 7vw, 48px); line-height: .9; font-weight: 950; letter-spacing: -.06em; text-transform: uppercase; color: #f1f5fb; text-shadow: 0 2px 0 #7b8593, 0 10px 26px rgba(0,0,0,.65); white-space: nowrap; }
+.doug-tagline { margin-top: 8px; color: var(--amber); font-size: clamp(11px, 2.8vw, 15px); font-weight: 850; letter-spacing: .13em; text-transform: uppercase; white-space: nowrap; }
+.mini-chart { height: 50px; display: flex; align-items: end; justify-content: center; gap: 4px; transform: skewX(-6deg); }
+.mini-chart i { display: block; width: 7px; background: linear-gradient(#1cff77, #0d7a38); box-shadow: 0 0 14px rgba(28,255,119,.22); }
+.mini-chart i:nth-child(1) { height: 12px; }
+.mini-chart i:nth-child(2) { height: 18px; }
+.mini-chart i:nth-child(3) { height: 24px; background: linear-gradient(#ff5c4b, #742117); }
+.mini-chart i:nth-child(4) { height: 31px; }
+.mini-chart i:nth-child(5) { height: 39px; }
+.mini-chart i:nth-child(6) { height: 48px; }
 
 .search-wrap { width: min(100%, 560px); position: relative; }
 .search { width: 100%; display: flex; gap: 7px; }
@@ -92,8 +135,11 @@ li + li { margin-top: 6px; }
 @media (max-width: 720px) {
   .shell { padding: 8px; }
   .search-panel { justify-content: center; padding-bottom: 110px; }
-  .home-banner { width: min(92vw, 390px); margin-bottom: 14px; }
-  .home-banner img { max-height: 82px; }
+  .doug-logo { width: min(92vw, 390px); grid-template-columns: 42px minmax(0, 1fr) 38px; gap: 9px; padding: 10px 11px; margin-bottom: 16px; }
+  .radar-mark { width: 40px; height: 40px; }
+  .radar-sweep { width: 18px; }
+  .mini-chart { height: 38px; gap: 3px; }
+  .mini-chart i { width: 5px; }
   .search-wrap { width: min(100%, 390px); }
   .search { gap: 6px; }
   .search input { font-size: 16px; padding: 13px 12px; }
@@ -108,8 +154,11 @@ li + li { margin-top: 6px; }
 }
 
 @media (max-width: 420px) {
-  .home-banner { width: min(92vw, 340px); }
-  .home-banner img { max-height: 72px; }
+  .doug-logo { width: min(94vw, 340px); grid-template-columns: 36px minmax(0, 1fr) 0; gap: 8px; padding: 9px 10px; }
+  .radar-mark { width: 34px; height: 34px; }
+  .radar-sweep { width: 15px; }
+  .mini-chart { display: none; }
+  .doug-tagline { letter-spacing: .08em; font-size: 9px; }
   .search-wrap { width: 100%; }
   .company-head { flex-direction: column; gap: 8px; }
   .price-block { text-align: left; }
