@@ -43,6 +43,14 @@ export type ResearchResult = {
   fallbackMode: boolean;
 };
 
+const fallbackAliases: Record<string, string> = {
+  NVIDIA: "NVDA",
+  "NVIDIA CORPORATION": "NVDA",
+  "SUPER MICRO": "SMCI",
+  "SUPER MICRO COMPUTER": "SMCI",
+  VERTIV: "VRT"
+};
+
 const fallbackProfiles: Record<string, Partial<ResearchResult>> = {
   NVDA: {
     symbol: "NVDA",
@@ -130,12 +138,13 @@ export function formatRatio(value?: number) {
 }
 
 function makeFallback(query: string): ResearchResult {
-  const upper = query.trim().toUpperCase() || "NVDA";
-  const base = fallbackProfiles[upper] ?? fallbackProfiles.NVDA;
+  const upper = query.trim().toUpperCase();
+  const mapped = fallbackAliases[upper] ?? upper;
+  const base = fallbackProfiles[mapped] ?? {};
   return {
     query,
-    symbol: base.symbol ?? upper,
-    companyName: base.companyName ?? upper,
+    symbol: base.symbol ?? (mapped || "UNKNOWN"),
+    companyName: base.companyName ?? (query.trim() || "Unknown company"),
     exchange: base.exchange,
     sector: base.sector,
     industry: base.industry,
@@ -151,21 +160,17 @@ function makeFallback(query: string): ResearchResult {
     totalDebt: base.totalDebt,
     cashAndEquivalents: base.cashAndEquivalents,
     sharesOutstanding: base.sharesOutstanding,
-    filings: [
-      { form: "10-K", filed: "Demo", description: "Annual report placeholder until SEC keyless pull resolves ticker/CIK." },
-      { form: "10-Q", filed: "Demo", description: "Quarterly filing placeholder." },
-      { form: "8-K", filed: "Demo", description: "Recent event filing placeholder." }
-    ],
+    filings: [],
     aiTags: base.aiTags ?? ["AI infrastructure", "data centers", "semiconductors"],
     score: base.score ?? 75,
     bullCase: base.bullCase ?? ["Potential exposure to AI infrastructure demand."],
     bearCase: base.bearCase ?? ["Needs real API data and filings reviewed before relying on the thesis."],
     providerLog: [
-      { name: "FMP", status: process.env.FMP_API_KEY ? "failed" : "missing_key", note: process.env.FMP_API_KEY ? "Live request failed or returned incomplete data." : "Add FMP_API_KEY for company profile, quote, ratios, and statements." },
-      { name: "SEC", status: "ready", note: "Official filing source. Uses SEC endpoints when CIK mapping is available." },
-      { name: "Finnhub", status: process.env.FINNHUB_API_KEY ? "skipped" : "missing_key", note: "Optional quote/fundamental fallback." },
-      { name: "Alpha Vantage", status: process.env.ALPHA_VANTAGE_API_KEY ? "skipped" : "missing_key", note: "Optional company overview fallback." },
-      { name: "EODHD", status: process.env.EODHD_API_KEY ? "skipped" : "missing_key", note: "Optional paid/global fundamentals fallback." }
+      { name: "FMP", status: process.env.FMP_API_KEY ? "failed" : "missing_key", note: process.env.FMP_API_KEY ? "Live request failed or returned incomplete data." : "Add FMP_API_KEY for live company profile, quote, ratios, and statements." },
+      { name: "SEC", status: "skipped", note: "Reserved for future filings/company-facts fallback." },
+      { name: "Finnhub", status: "skipped", note: "Reserved for future quote/fundamental fallback." },
+      { name: "Alpha Vantage", status: "skipped", note: "Reserved for future overview fallback." },
+      { name: "EODHD", status: "skipped", note: "Reserved for future global fundamentals fallback." }
     ],
     updatedAt: new Date().toISOString(),
     fallbackMode: true
