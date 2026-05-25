@@ -14,6 +14,8 @@ export type Filing = {
   url?: string;
 };
 
+export type DataStatus = "ready" | "demo" | "needs_key" | "not_found" | "provider_error";
+
 export type ResearchResult = {
   query: string;
   symbol: string;
@@ -41,7 +43,11 @@ export type ResearchResult = {
   providerLog: ResearchProvider[];
   updatedAt: string;
   fallbackMode: boolean;
+  dataStatus: DataStatus;
+  errorMessage?: string;
 };
+
+type AnyRecord = Record<string, unknown>;
 
 const fallbackAliases: Record<string, string> = {
   NVIDIA: "NVDA",
@@ -141,6 +147,7 @@ function makeFallback(query: string): ResearchResult {
   const upper = query.trim().toUpperCase();
   const mapped = fallbackAliases[upper] ?? upper;
   const base = fallbackProfiles[mapped] ?? {};
+  const hasDemo = Boolean(base.symbol);
   return {
     query,
     symbol: base.symbol ?? (mapped || "UNKNOWN"),
@@ -161,27 +168,126 @@ function makeFallback(query: string): ResearchResult {
     cashAndEquivalents: base.cashAndEquivalents,
     sharesOutstanding: base.sharesOutstanding,
     filings: [],
-    aiTags: base.aiTags ?? ["AI infrastructure", "data centers", "semiconductors"],
-    score: base.score ?? 75,
-    bullCase: base.bullCase ?? ["Potential exposure to AI infrastructure demand."],
-    bearCase: base.bearCase ?? ["Needs real API data and filings reviewed before relying on the thesis."],
+    aiTags: base.aiTags ?? [],
+    score: base.score ?? 0,
+    bullCase: base.bullCase ?? [],
+    bearCase: base.bearCase ?? [],
     providerLog: [
-      { name: "FMP", status: process.env.FMP_API_KEY ? "failed" : "missing_key", note: process.env.FMP_API_KEY ? "Live request failed or returned incomplete data." : "Add FMP_API_KEY for live company profile, quote, ratios, and statements." },
-      { name: "SEC", status: "skipped", note: "Reserved for future filings/company-facts fallback." },
-      { name: "Finnhub", status: "skipped", note: "Reserved for future quote/fundamental fallback." },
-      { name: "Alpha Vantage", status: "skipped", note: "Reserved for future overview fallback." },
-      { name: "EODHD", status: "skipped", note: "Reserved for future global fundamentals fallback." }
+      { name: "FMP", status: "missing_key", note: "Add FMP_API_KEY for live company data." }
     ],
     updatedAt: new Date().toISOString(),
-    fallbackMode: true
+    fallbackMode: true,
+    dataStatus: hasDemo ? "demo" : "needs_key",
+    errorMessage: hasDemo ? undefined : "FMP_API_KEY is missing."
   };
 }
 
+function makeStatus(query: string, dataStatus: Exclude<DataStatus, "ready" | "demo">, message: string): ResearchResult {
+  const clean = query.trim().toUpperCase() || "SEARCH";
+  return {
+    query,
+    symbol: clean,
+    companyName: query.trim() || "Unknown company",
+    filings: [],
+    aiTags: [],
+    score: 0,
+    bullCase: [],
+    bearCase: [],
+    providerLog: [
+      { name: "FMP", status: dataStatus === "needs_key" ? "missing_key" : "failed", note: message }
+    ],
+    updatedAt: new Date().toISOString(),
+    fallbackMode: false,
+    dataStatus,
+    errorMessage: message
+  };
+}
+
+function makeFmpUrl(path: string, apiKey: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `https://financialmodelingprep.com${path}${separator}apikey=${apiKey}`;
+}
+
 async function fetchJson(url: string) {
-  const res = await fetch(url, { next: { revalidate: 3600 } });
+  const res = await fetch(url, {
+    next: { revalidate: 1800 },
+    headers: { Accept: "application/json" }
+  });
+
   if (res.status === 429) throw new Error("rate_limited");
-  if (!res.ok) throw new Error(`request_failed_${res.status}`);
-  return res.json();
+
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`bad_json_${res.status}`);
+  }
+
+  if (!res.ok) {
+    const message = getFmpMessage(data) || `request_failed_${res.status}`;
+    throw new Error(message);
+  }
+
+  const fmpMessage = getFmpMessage(data);
+  if (fmpMessage && /invalid|apikey|limit|upgrade|plan|access|error/i.test(fmpMessage)) {
+    throw new Error(fmpMessage);
+  }
+
+  return data;
+}
+
+function getFmpMessage(data: unknown) {
+  if (!data || typeof data !== "object") return "";
+  const record = data as AnyRecord;
+  return String(record["Error Message"] ?? record["Information"] ?? record.message ?? record.error ?? "");
+}
+
+async function fetchFirst(paths: string[], apiKey: string) {
+  const errors: string[] = [];
+  for (const path of paths) {
+    try {
+      return await fetchJson(makeFmpUrl(path, apiKey));
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  throw new Error(errors.find(Boolean) || "all_requests_failed");
+}
+
+function firstRow(data: unknown): AnyRecord {
+  if (Array.isArray(data)) return (data[0] ?? {}) as AnyRecord;
+  if (data && typeof data === "object") return data as AnyRecord;
+  return {};
+}
+
+function hasKeys(record: AnyRecord) {
+  return Object.keys(record).length > 0;
+}
+
+function isTickerLike(query: string) {
+  return /^[A-Za-z][A-Za-z.\-]{0,9}$/.test(query.trim());
+}
+
+async function resolveSymbol(query: string, apiKey: string) {
+  const trimmed = query.trim();
+  if (isTickerLike(trimmed)) return trimmed.toUpperCase();
+
+  const clean = encodeURIComponent(trimmed);
+  const search = await fetchFirst([
+    `/stable/search-symbol?query=${clean}&limit=5`,
+    `/api/v3/search?query=${clean}&limit=5`
+  ], apiKey).catch(() => []);
+
+  if (!Array.isArray(search) || search.length === 0) return trimmed.toUpperCase();
+
+  const preferred = search.find((item: AnyRecord) => {
+    const exchange = String(item.exchangeShortName ?? item.exchange ?? item.stockExchange ?? "").toUpperCase();
+    return ["NASDAQ", "NYSE", "AMEX"].includes(exchange);
+  }) as AnyRecord | undefined;
+
+  const item = preferred ?? (search[0] as AnyRecord);
+  return String(item.symbol ?? item.ticker ?? trimmed).toUpperCase();
 }
 
 export async function getResearch(query: string): Promise<ResearchResult> {
@@ -189,71 +295,108 @@ export async function getResearch(query: string): Promise<ResearchResult> {
   if (!apiKey) return makeFallback(query);
 
   try {
-    const clean = encodeURIComponent(query.trim());
-    const search = await fetchJson(`https://financialmodelingprep.com/api/v3/search?query=${clean}&limit=1&apikey=${apiKey}`);
-    const symbol = search?.[0]?.symbol ?? query.trim().toUpperCase();
-    const [profile, quote, ratios, income, cashflow, balance] = await Promise.all([
-      fetchJson(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${apiKey}`).catch(() => []),
-      fetchJson(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${apiKey}`).catch(() => []),
-      fetchJson(`https://financialmodelingprep.com/api/v3/ratios-ttm/${symbol}?apikey=${apiKey}`).catch(() => []),
-      fetchJson(`https://financialmodelingprep.com/api/v3/income-statement/${symbol}?limit=1&apikey=${apiKey}`).catch(() => []),
-      fetchJson(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${symbol}?limit=1&apikey=${apiKey}`).catch(() => []),
-      fetchJson(`https://financialmodelingprep.com/api/v3/balance-sheet-statement/${symbol}?limit=1&apikey=${apiKey}`).catch(() => [])
+    const symbol = await resolveSymbol(query, apiKey);
+    const encodedSymbol = encodeURIComponent(symbol);
+
+    const [profileRaw, quoteRaw, ratiosRaw, incomeRaw, cashflowRaw, balanceRaw] = await Promise.all([
+      fetchFirst([
+        `/stable/profile?symbol=${encodedSymbol}`,
+        `/api/v3/profile/${encodedSymbol}`
+      ], apiKey).catch(() => []),
+      fetchFirst([
+        `/stable/quote?symbol=${encodedSymbol}`,
+        `/api/v3/quote/${encodedSymbol}`
+      ], apiKey).catch(() => []),
+      fetchFirst([
+        `/stable/ratios-ttm?symbol=${encodedSymbol}`,
+        `/api/v3/ratios-ttm/${encodedSymbol}`
+      ], apiKey).catch(() => []),
+      fetchFirst([
+        `/stable/income-statement?symbol=${encodedSymbol}&period=annual&limit=1`,
+        `/api/v3/income-statement/${encodedSymbol}?period=annual&limit=1`
+      ], apiKey).catch(() => []),
+      fetchFirst([
+        `/stable/cash-flow-statement?symbol=${encodedSymbol}&period=annual&limit=1`,
+        `/api/v3/cash-flow-statement/${encodedSymbol}?period=annual&limit=1`
+      ], apiKey).catch(() => []),
+      fetchFirst([
+        `/stable/balance-sheet-statement?symbol=${encodedSymbol}&period=annual&limit=1`,
+        `/api/v3/balance-sheet-statement/${encodedSymbol}?period=annual&limit=1`
+      ], apiKey).catch(() => [])
     ]);
 
-    const p = profile?.[0] ?? {};
-    const q = quote?.[0] ?? {};
-    const r = ratios?.[0] ?? {};
-    const i = income?.[0] ?? {};
-    const c = cashflow?.[0] ?? {};
-    const b = balance?.[0] ?? {};
-    const sector = p.sector || "Unknown";
-    const industry = p.industry || "Unknown";
-    const tags = inferAiTags(`${sector} ${industry} ${p.description ?? ""}`);
+    const p = firstRow(profileRaw);
+    const q = firstRow(quoteRaw);
+    const r = firstRow(ratiosRaw);
+    const i = firstRow(incomeRaw);
+    const c = firstRow(cashflowRaw);
+    const b = firstRow(balanceRaw);
+
+    const hasCompanyIdentity = hasKeys(p) || hasKeys(q);
+    if (!hasCompanyIdentity) {
+      return makeStatus(query, "not_found", `FMP returned no profile or quote for ${symbol}. Try the exact ticker symbol.`);
+    }
+
+    const companyName = str(p.companyName ?? p.companyNameLong ?? q.name ?? q.companyName ?? symbol);
+    const sector = str(p.sector);
+    const industry = str(p.industry);
+    const exchange = str(p.exchangeShortName ?? p.exchange ?? q.exchange ?? q.exchangeShortName);
+    const description = str(p.description ?? p.companyDescription);
+    const tags = inferAiTags(`${sector} ${industry} ${description} ${companyName}`);
     const score = scoreCompany(tags, r, c, b);
 
     return {
       query,
-      symbol,
-      companyName: p.companyName || q.name || symbol,
-      exchange: p.exchangeShortName || q.exchange,
+      symbol: str(p.symbol ?? q.symbol ?? symbol) || symbol,
+      companyName: companyName || symbol,
+      exchange,
       sector,
       industry,
-      price: num(q.price),
-      changePercent: num(q.changesPercentage),
-      marketCap: num(q.marketCap ?? p.mktCap),
-      peRatio: num(q.pe ?? r.peRatioTTM),
+      price: num(q.price ?? p.price),
+      changePercent: num(q.changesPercentage ?? q.changePercentage ?? q.changePercent),
+      marketCap: num(q.marketCap ?? p.mktCap ?? p.marketCap),
+      peRatio: num(q.pe ?? p.pe ?? r.peRatioTTM ?? r.peRatio),
       revenue: num(i.revenue),
-      freeCashFlow: num(c.freeCashFlow),
-      grossMargin: percent(r.grossProfitMarginTTM),
-      operatingMargin: percent(r.operatingProfitMarginTTM),
-      netMargin: percent(r.netProfitMarginTTM),
+      freeCashFlow: num(c.freeCashFlow ?? c.freeCashFlowTTM),
+      grossMargin: percent(r.grossProfitMarginTTM ?? r.grossProfitMargin),
+      operatingMargin: percent(r.operatingProfitMarginTTM ?? r.operatingProfitMargin),
+      netMargin: percent(r.netProfitMarginTTM ?? r.netProfitMargin),
       totalDebt: num(b.totalDebt),
-      cashAndEquivalents: num(b.cashAndCashEquivalents),
-      sharesOutstanding: num(q.sharesOutstanding),
+      cashAndEquivalents: num(b.cashAndCashEquivalents ?? b.cashAndShortTermInvestments),
+      sharesOutstanding: num(q.sharesOutstanding ?? p.sharesOutstanding),
       filings: [],
       aiTags: tags,
       score,
       bullCase: makeBullCase(tags, score),
-      bearCase: makeBearCase(score, q.pe, c.freeCashFlow),
+      bearCase: makeBearCase(score, q.pe ?? p.pe ?? r.peRatioTTM, c.freeCashFlow ?? c.freeCashFlowTTM),
       providerLog: [
-        { name: "FMP", status: "ready", note: "Primary profile, quote, ratios, income, cash flow, and balance sheet pull succeeded." },
-        { name: "SEC", status: "skipped", note: "Wire next for latest filings and source-of-truth company facts." },
-        { name: "Finnhub", status: process.env.FINNHUB_API_KEY ? "skipped" : "missing_key", note: "Optional fallback, not used because FMP returned enough data." },
-        { name: "Alpha Vantage", status: process.env.ALPHA_VANTAGE_API_KEY ? "skipped" : "missing_key", note: "Optional fallback." },
-        { name: "EODHD", status: process.env.EODHD_API_KEY ? "skipped" : "missing_key", note: "Optional fallback." }
+        { name: "FMP", status: "ready", note: "Live FMP pull returned company data." },
+        { name: "SEC", status: "skipped", note: "Reserved for filings in a later version." },
+        { name: "Finnhub", status: "skipped", note: "Reserved fallback provider." },
+        { name: "Alpha Vantage", status: "skipped", note: "Reserved fallback provider." },
+        { name: "EODHD", status: "skipped", note: "Reserved fallback provider." }
       ],
       updatedAt: new Date().toISOString(),
-      fallbackMode: false
+      fallbackMode: false,
+      dataStatus: "ready"
     };
-  } catch {
-    return makeFallback(query);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown FMP error";
+    const status = message === "rate_limited" ? "provider_error" : "provider_error";
+    return makeStatus(query, status, `FMP request failed: ${message}`);
   }
 }
 
 function num(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function str(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  const out = String(value).trim();
+  return out || undefined;
 }
 
 function percent(value: unknown): number | undefined {
@@ -266,25 +409,26 @@ function inferAiTags(text: string) {
   const haystack = text.toLowerCase();
   const tags: string[] = [];
   const checks: Array<[string, string[]]> = [
-    ["AI accelerators", ["semiconductor", "gpu", "chip", "accelerator"]],
-    ["data center hardware", ["server", "data center", "datacenter", "rack"]],
-    ["power infrastructure", ["power", "electrical", "grid", "switchgear"]],
+    ["AI accelerators", ["semiconductor", "gpu", "chip", "accelerator", "processor"]],
+    ["data center hardware", ["server", "data center", "datacenter", "rack", "hardware"]],
+    ["power infrastructure", ["power", "electrical", "grid", "switchgear", "electrification"]],
     ["cooling", ["cooling", "thermal", "hvac"]],
-    ["networking", ["network", "ethernet", "optical"]],
-    ["cloud", ["cloud", "hyperscale", "infrastructure"]]
+    ["networking", ["network", "ethernet", "optical", "switching"]],
+    ["cloud", ["cloud", "hyperscale", "infrastructure", "hosting"]],
+    ["enterprise AI", ["software", "consulting", "enterprise", "automation", "watson"]]
   ];
   for (const [tag, words] of checks) {
     if (words.some((w) => haystack.includes(w))) tags.push(tag);
   }
-  return tags.length ? tags.slice(0, 5) : ["general AI infrastructure watchlist"];
+  return tags.length ? tags.slice(0, 5) : ["general watchlist"];
 }
 
-function scoreCompany(tags: string[], ratios: Record<string, unknown>, cashflow: Record<string, unknown>, balance: Record<string, unknown>) {
-  let score = 50 + tags.length * 8;
-  const fcf = num(cashflow.freeCashFlow);
+function scoreCompany(tags: string[], ratios: AnyRecord, cashflow: AnyRecord, balance: AnyRecord) {
+  let score = 45 + tags.length * 7;
+  const fcf = num(cashflow.freeCashFlow ?? cashflow.freeCashFlowTTM);
   const debt = num(balance.totalDebt);
-  const cash = num(balance.cashAndCashEquivalents);
-  const margin = percent(ratios.operatingProfitMarginTTM);
+  const cash = num(balance.cashAndCashEquivalents ?? balance.cashAndShortTermInvestments);
+  const margin = percent(ratios.operatingProfitMarginTTM ?? ratios.operatingProfitMargin);
   if ((fcf ?? 0) > 0) score += 8;
   if ((cash ?? 0) > (debt ?? 0)) score += 6;
   if ((margin ?? 0) > 20) score += 8;
@@ -293,9 +437,9 @@ function scoreCompany(tags: string[], ratios: Record<string, unknown>, cashflow:
 
 function makeBullCase(tags: string[], score: number) {
   return [
-    tags.length > 1 ? `Clear exposure to ${tags.slice(0, 3).join(", ")}.` : "Some exposure to the AI infrastructure buildout.",
-    score >= 80 ? "The available fundamentals and theme fit look strong enough for deeper research." : "The dashboard gives a starting point, but this needs more confirmation.",
-    "Best use case: identify whether the company belongs on a watchlist before reading filings or earnings calls."
+    tags.length > 1 ? `Relevant exposure found: ${tags.slice(0, 3).join(", ")}.` : "This may belong on a broader watchlist, but the AI infrastructure link needs confirmation.",
+    score >= 80 ? "Theme fit looks strong enough for deeper research." : "Use this as a first-pass screen, then verify with filings and earnings calls.",
+    "The useful next step is comparing the thesis against valuation and cash generation."
   ];
 }
 
@@ -305,6 +449,6 @@ function makeBearCase(score: number, pe?: unknown, fcf?: unknown) {
   return [
     peNum && peNum > 45 ? "Valuation may already price in a lot of AI growth." : "Valuation still needs to be compared against growth and peers.",
     fcfNum !== undefined && fcfNum < 0 ? "Free cash flow is negative, so growth quality needs review." : "Free cash flow trend should be checked across multiple years.",
-    score < 70 ? "Theme fit is not strong enough by itself. Do not force the AI narrative." : "AI narrative risk: good company can still be a bad entry if expectations are too high."
+    score < 70 ? "Theme fit is not strong enough by itself. Do not force the AI narrative." : "AI narrative risk: a good company can still be a bad entry if expectations are too high."
   ];
 }

@@ -2,41 +2,45 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { SYMBOLS } from "../../lib/data/symbols";
 
-const suggestions = [
-  { symbol: "NVDA", name: "NVIDIA Corporation", theme: "AI chips" },
-  { symbol: "AMD", name: "Advanced Micro Devices", theme: "AI accelerators" },
-  { symbol: "TSM", name: "Taiwan Semiconductor", theme: "Foundry" },
-  { symbol: "SMCI", name: "Super Micro Computer", theme: "AI servers" },
-  { symbol: "VRT", name: "Vertiv Holdings", theme: "Power and cooling" },
-  { symbol: "AVGO", name: "Broadcom", theme: "Networking chips" },
-  { symbol: "ARM", name: "Arm Holdings", theme: "Chip architecture" },
-  { symbol: "MU", name: "Micron Technology", theme: "Memory" },
-  { symbol: "ANET", name: "Arista Networks", theme: "Data center networking" },
-  { symbol: "DELL", name: "Dell Technologies", theme: "AI servers" },
-  { symbol: "ETN", name: "Eaton", theme: "Electrical infrastructure" },
-  { symbol: "ORCL", name: "Oracle", theme: "Cloud infrastructure" },
-  { symbol: "MSFT", name: "Microsoft", theme: "AI cloud" },
-  { symbol: "GOOGL", name: "Alphabet", theme: "AI cloud" },
-  { symbol: "AMZN", name: "Amazon", theme: "AWS data centers" },
-  { symbol: "META", name: "Meta Platforms", theme: "AI capex" },
-  { symbol: "MRVL", name: "Marvell Technology", theme: "Custom silicon" }
-];
+function isTickerLike(value: string) {
+  return /^[a-zA-Z][a-zA-Z.\-]{0,9}$/.test(value.trim());
+}
+
+function scoreMatch(item: { symbol: string; name: string; theme: string }, clean: string) {
+  const symbol = item.symbol.toLowerCase();
+  const name = item.name.toLowerCase();
+  const theme = item.theme.toLowerCase();
+
+  if (symbol === clean) return 0;
+  if (symbol.startsWith(clean)) return 1;
+  if (name.startsWith(clean)) return 2;
+  if (name.includes(` ${clean}`)) return 3;
+  if (theme.includes(clean)) return 4;
+  if (symbol.includes(clean)) return 5;
+  if (name.includes(clean)) return 6;
+  return 99;
+}
 
 export default function SearchBox({ initialQuery = "", compact = false }: { initialQuery?: string; compact?: boolean }) {
   const [value, setValue] = useState(initialQuery);
   const clean = value.trim().toLowerCase();
+  const exactTicker = value.trim().toUpperCase();
 
   const matches = useMemo(() => {
     if (!clean || compact) return [];
-    return suggestions
-      .filter((item) =>
-        item.symbol.toLowerCase().includes(clean) ||
-        item.name.toLowerCase().includes(clean) ||
-        item.theme.toLowerCase().includes(clean)
-      )
-      .slice(0, 5);
+
+    return SYMBOLS
+      .map((item) => ({ item, score: scoreMatch(item, clean) }))
+      .filter((entry) => entry.score < 99)
+      .sort((a, b) => a.score - b.score || a.item.symbol.localeCompare(b.item.symbol))
+      .slice(0, 8)
+      .map((entry) => entry.item);
   }, [clean, compact]);
+
+  const hasExactSymbol = matches.some((item) => item.symbol.toUpperCase() === exactTicker);
+  const showExactSearch = Boolean(clean && !compact && isTickerLike(value) && !hasExactSymbol);
 
   function go(query: string) {
     const q = query.trim();
@@ -66,7 +70,7 @@ export default function SearchBox({ initialQuery = "", compact = false }: { init
         </button>
       </form>
 
-      {matches.length > 0 && (
+      {(matches.length > 0 || showExactSearch) && (
         <div className="suggestions" aria-label="Ticker suggestions">
           {matches.map((item) => (
             <button key={item.symbol} type="button" onClick={() => go(item.symbol)}>
@@ -75,6 +79,13 @@ export default function SearchBox({ initialQuery = "", compact = false }: { init
               <span className="suggestion-theme">{item.theme}</span>
             </button>
           ))}
+          {showExactSearch && (
+            <button type="button" className="exact-search" onClick={() => go(exactTicker)}>
+              <span className="suggestion-symbol">{exactTicker}</span>
+              <span className="suggestion-name">Search exact ticker</span>
+              <span className="suggestion-theme">Works even if it is not in the local suggestion file</span>
+            </button>
+          )}
         </div>
       )}
     </div>

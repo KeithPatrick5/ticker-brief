@@ -2,10 +2,12 @@
 
 Mobile-first stock research brief for AI infrastructure names.
 
-Build 4 changes:
+Current build changes:
 - Empty homepage is reduced to a Google-style title and search box.
 - No default stock, ticker chips, API/provider cards, or explanatory homepage copy.
 - Autocomplete suggestions appear only after the user starts typing.
+- Local autocomplete now reads from `lib/data/symbols.ts` with 400+ common stocks, ETFs, and AI-infrastructure names.
+- Unknown exact tickers can still be searched even when they are not in the local suggestion file.
 - Results show compact company data, AI infrastructure score, bull/bear case, financial snapshot, and related tickers.
 - FMP remains the only active live provider for V1.
 
